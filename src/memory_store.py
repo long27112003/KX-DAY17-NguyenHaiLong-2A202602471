@@ -186,21 +186,32 @@ def extract_profile_updates(message: str) -> dict[str, str]:
     return facts
 
 
-def summarize_messages(messages: list[dict[str, str]], max_items: int = 6) -> str:
-    """Create a compact summary of older messages."""
-    if not messages:
-        return ""
-    items = messages[-max_items:] if len(messages) > max_items else messages
-    lines = []
-    for msg in items:
+def summarize_messages(
+    messages: list[dict[str, str]], existing_summary: str = "", max_items: int = 4
+) -> str:
+    """Create a compact, consolidated summary of older messages.
+
+    Ensures the summary stays bounded in size (constant upper limit on tokens).
+    """
+    summary_lines: list[str] = []
+    if existing_summary:
+        for line in existing_summary.splitlines():
+            line = line.strip()
+            if line.startswith("- "):
+                summary_lines.append(line)
+
+    for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "").strip()
-        if len(content) > 120:
-            snippet = content[:117] + "..."
+        if len(content) > 80:
+            snippet = content[:77] + "..."
         else:
             snippet = content
-        lines.append(f"- {role}: {snippet}")
-    return "[Bản tóm tắt hội thoại cũ]:\n" + "\n".join(lines)
+        summary_lines.append(f"- {role}: {snippet}")
+
+    # Keep only the most recent key items to prevent unbounded summary growth
+    bounded_lines = summary_lines[-max_items:]
+    return "[Bản tóm tắt hội thoại cũ]:\n" + "\n".join(bounded_lines)
 
 
 @dataclass
@@ -239,13 +250,12 @@ class CompactMemoryManager:
             to_compact = messages[:-self.keep_messages]
             kept_messages = messages[-self.keep_messages:]
 
-            new_summary = summarize_messages(to_compact)
             old_summary = str(thread_state.get("summary", "")).strip()
-            if old_summary:
-                thread_state["summary"] = f"{old_summary}\n{new_summary}"
-            else:
-                thread_state["summary"] = new_summary
+            new_summary = summarize_messages(
+                to_compact, existing_summary=old_summary, max_items=4
+            )
 
+            thread_state["summary"] = new_summary
             thread_state["messages"] = kept_messages
             thread_state["compactions"] = int(thread_state.get("compactions", 0)) + 1
 
